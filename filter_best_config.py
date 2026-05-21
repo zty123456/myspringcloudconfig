@@ -22,8 +22,6 @@ from pathlib import Path
 
 
 def parse_hw_groups(raw: str):
-    """解析 [[1,2],[3,4]] 或 [['1','2'],['3','4']] 格式的 JSON 数组。"""
-    # 允许用户使用单引号或中文字符等
     normalized = raw.replace("'", '"')
     groups = json.loads(normalized)
     if not isinstance(groups, list) or not all(isinstance(g, list) for g in groups):
@@ -33,6 +31,7 @@ def parse_hw_groups(raw: str):
 
 def main(csv_path: str, hw_groups=None, seq_lens=None, output_name=None) -> None:
     df = pd.read_csv(csv_path)
+    original_columns = list(df.columns)
 
     if df.empty:
         print("CSV is empty.")
@@ -48,13 +47,10 @@ def main(csv_path: str, hw_groups=None, seq_lens=None, output_name=None) -> None
         print(f"ERROR: missing columns: {missing}")
         return
 
-    # 确保 hw 列是字符串，以便与分组值匹配
     df["hw"] = df["hw"].astype(str)
 
-    # 按 step_time_ms 升序排列
     df = df.sort_values("step_time_ms", ascending=True)
 
-    # 按 seq_len 筛选
     if seq_lens:
         seq_set = set(seq_lens)
         df = df[df["seq_len"].isin(seq_set)]
@@ -62,11 +58,9 @@ def main(csv_path: str, hw_groups=None, seq_lens=None, output_name=None) -> None
             print(f"ERROR: no rows match seq_len in {sorted(seq_set)}")
             return
 
-    # 按 hw 分组筛选
     if hw_groups:
         allowed_hw = {hw for group in hw_groups for hw in group}
         df = df[df["hw"].isin(allowed_hw)]
-        # 将 hw 映射到组标签上
         hw_to_group = {}
         for i, group in enumerate(hw_groups):
             label = "+".join(group)
@@ -77,12 +71,13 @@ def main(csv_path: str, hw_groups=None, seq_lens=None, output_name=None) -> None
     else:
         group_keys = ["hw", "seq_len"]
 
-    # 每组取 step_time_ms 最小的一行
     result = df.groupby(group_keys, as_index=False, sort=False).first()
 
-    # 如果使用了 hw_group，移除临时列，保留原始 hw（即最小 step_time 对应的 hw 值）
     if hw_groups:
         result.drop(columns=["hw_group"], inplace=True)
+
+    # 按原始 CSV 列顺序排列
+    result = result[[c for c in original_columns if c in result.columns]]
 
     out_dir = Path(csv_path).parent
     out_name = output_name or "best_per_hw_seq_len.csv"
