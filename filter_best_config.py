@@ -1,16 +1,17 @@
 """
-按 hw 分组 + seq_len 分组，每组取 step_time_ms 最小的配置行，输出到新 CSV。
+按 hw + seq_len 分组，每组取 step_time_ms 最小的配置行，输出到新 CSV。
 
 用法:
   python scripts/filter_best_config.py <csv_path>
-  python scripts/filter_best_config.py <csv_path> --hw-groups '[["1","2"],["3","4"]]'
+  python scripts/filter_best_config.py <csv_path> --hw-groups '[["ascend_910c","ascend_910b"],["nvidia_h100_sxm","nvidia_h800"]]'
   python scripts/filter_best_config.py <csv_path> --seq-lens 4096,8192
   python scripts/filter_best_config.py <csv_path> --hw-groups '[["1","2"],["3","4"]]' --seq-lens 4096,8192 --output best.csv
 
 说明:
-  --hw-groups: 将 hw 列的值分组，同组内竞争取 step_time_ms 最小的配置。
-               例如 [["1","2"],["3","4"]] 表示节点数 1 和 2 作为一组，3 和 4 作为另一组。
-               不指定时，每个 hw 值独立作为一组。
+  --hw-groups: 筛选 hw 列的值，仅保留出现在分组中的 hw。每个 hw 独立按 seq_len 取最优配置。
+               例如 [["ascend_910c","ascend_910b"],["nvidia_h100_sxm","nvidia_h800"]]
+               会分别取 ascend_910c、ascend_910b、nvidia_h100_sxm、nvidia_h800 各自的最优行。
+               不指定时，保留所有 hw。
   --seq-lens:  逗号分隔的 seq_len 列表，只保留这些 seq_len 的行。
                不指定时，保留所有 seq_len。
   --output:    输出文件名（默认 best_per_hw_seq_len.csv，写入 CSV 所在目录）。
@@ -61,23 +62,25 @@ def main(csv_path: str, hw_groups=None, seq_lens=None, output_name=None) -> None
     if hw_groups:
         allowed_hw = {hw for group in hw_groups for hw in group}
         df = df[df["hw"].isin(allowed_hw)]
-        hw_to_group = {}
-        for i, group in enumerate(hw_groups):
+        # 构建 hw → (group_idx, hw_in_group_idx, label) 映射
+        hw_info = {}
+        for gi, group in enumerate(hw_groups):
             label = "+".join(group)
-            for hw_val in group:
-                hw_to_group[hw_val] = label
-        df["hw_group"] = df["hw"].map(hw_to_group)
-        group_keys = ["hw_group", "seq_len"]
-    else:
-        group_keys = ["hw", "seq_len"]
+            for hi, hw_val in enumerate(group):
+                hw_info[hw_val] = (gi, hi, label)
+        df["_group_order"] = df["hw"].map(lambda h: hw_info[h][0] if h in hw_info else 999)
+        df["_hw_order"] = df["hw"].map(lambda h: hw_info[h][1] if h in hw_info else 999)
 
-    result = df.groupby(group_keys, as_index=False, sort=False).first()
+    # 每个 hw 独立按 seq_len 取 step_time_ms 最小的配置
+    result = df.groupby(["hw", "seq_len"], as_index=False, sort=False).first()
 
+    # 按 hw_group 顺序 → seq_len → hw 在组内顺序 排序
     if hw_groups:
-        result.drop(columns=["hw_group"], inplace=True)
-
-    # 按原始 CSV 列顺序排列
-    result = result[[c for c in original_columns if c in result.columns]]
+        result = result.sort_values(["_group_order", "seq_len", "_hw_order"], ascending=[True, True, True])
+        result.drop(columns=["_group_order", "_hw_order"], inplace=True)
+        result = result[[c for c in original_columns if c in result.columns]]
+    else:
+        result = result[[c for c in original_columns if c in result.columns]]
 
     out_dir = Path(csv_path).parent
     out_name = output_name or "best_per_hw_seq_len.csv"
