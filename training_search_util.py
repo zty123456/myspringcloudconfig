@@ -22,6 +22,7 @@ from tqdm import tqdm
 
 from zrt.hardware.registry import load as load_hw
 from zrt.training.io.config_loader import _parse_model, _parse_system, _parse_strategy
+from zrt.training.models.memory import memory_breakdown
 from zrt.training.search.estimator import estimate
 from zrt.training.search.report import report_summary
 from zrt.training.spec.model import ModelSpec
@@ -42,11 +43,7 @@ logger = logging.getLogger(__name__)
 
 _WORKER_MODEL_CACHE: Dict[Tuple[str, Optional[str]], ModelSpec] = {}
 _WORKER_HW_CACHE: Dict[Tuple[str, int], SystemSpec] = {}
-
-# Main-process caches (shared across format_results / export_best_configs_excel).
-_HW_CACHE: Dict[str, Any] = {}
-_CommDomainKey = Tuple[str, int, int, int, int, int, int]  # hw, ws, tp, cp, ep, dp, pp
-_COMM_DOMAIN_CACHE: Dict[_CommDomainKey, Dict[str, str]] = {}
+_WORKER_GRAPH_CACHE: Dict[Tuple[Any, ...], Any] = {}
 
 _MODELS_DIR = Path(__file__).parent.parent / "configs" / "models"
 _DEFAULT_POD_PACKING_AXES = ("tp", "cp")
@@ -215,7 +212,7 @@ def _load_model_spec(model_name: str, quant_preset: Optional[str] = None) -> Mod
 def _make_system_from_config(config: Dict, *, warn_partial: bool = True) -> SystemSpec:
     _reject_gpus_per_node_config(config)
     hw_name = config.get("hw", "nvidia_h100_sxm")
-    hw = _cached_hw(hw_name)
+    hw = load_hw(hw_name)
 
     gpus_per_node = _inferred_gpus_per_node(hw)
     world_size_override = None
@@ -299,33 +296,6 @@ def _comm_domain_columns_from_config(config: Dict[str, Any]) -> dict[str, str]:
         f"{axis}_comm_domain": format_comm_domain_entry(report[axis.upper()])
         for axis in _COMM_DOMAIN_AXES
     }
-
-
-def _cached_hw(hw_name: str):
-    """Cached hardware-spec loader for the main process."""
-    if hw_name not in _HW_CACHE:
-        _HW_CACHE[hw_name] = load_hw(hw_name)
-    return _HW_CACHE[hw_name]
-
-
-def _comm_domain_cache_key(config: Dict[str, Any]) -> _CommDomainKey:
-    return (
-        config.get("hw", "nvidia_h100_sxm"),
-        int(config.get("world_size", 1)),
-        int(config.get("tp", 1)),
-        int(config.get("cp", 1)),
-        int(config.get("ep", 1)),
-        int(config.get("dp", 1)),
-        int(config.get("pp", 1)),
-    )
-
-
-def _cached_comm_domain_columns(config: Dict[str, Any]) -> Dict[str, str]:
-    """Memoized wrapper that avoids rebuilding SystemSpec+Strategy every row."""
-    key = _comm_domain_cache_key(config)
-    if key not in _COMM_DOMAIN_CACHE:
-        _COMM_DOMAIN_CACHE[key] = _comm_domain_columns_from_config(config)
-    return _COMM_DOMAIN_CACHE[key]
 
 
 @dataclass
@@ -578,7 +548,7 @@ class TrainingConfigManager:
 
         system = None
         try:
-            hw = _cached_hw(hw_name)
+            hw = load_hw(hw_name)
             gpus_per_node = _inferred_gpus_per_node(hw)
             nodes = _ceil_nodes_for_world_size(target_ws, gpus_per_node)
             system = _system_from_hw(
@@ -644,7 +614,7 @@ class TrainingConfigManager:
         except Exception:
             pass
         try:
-            hw = _cached_hw(hw_name)
+            hw = load_hw(hw_name)
             gpus_per_node = _inferred_gpus_per_node(hw)
             nodes = _ceil_nodes_for_world_size(target_ws, gpus_per_node)
             system = _system_from_hw(
@@ -687,8 +657,59 @@ class TrainingConfigManager:
 
 
 def _worker_initializer(model_name: str = "deepseek_v3_2"):
-    global _WORKER_MODEL_CACHE, _WORKER_HW_CACHE
+    global _WORKER_MODEL_CACHE, _WORKER_HW_CACHE, _WORKER_GRAPH_CACHE
     _WORKER_MODEL_CACHE[(model_name, None)] = _load_model_spec(model_name)
+    _WORKER_GRAPH_CACHE.clear()
+
+
+def _graph_cache_key(config: Dict[str, Any]) -> Tuple[Any, ...]:
+    """Return the fields that determine the generated training IR graph.
+
+    The graph depends on model geometry/dtypes and sharding collectives. It
+    does not depend on DP/global batch/optimizer/ZeRO, which are consumed by
+    the later estimator and memory formulas.
+    """
+    return (
+        config.get("model", "deepseek_v3_2"),
+        config.get("quant_preset") or None,
+        int(config.get("seq_len", 4096)),
+        int(config.get("micro_batch", 1)),
+        int(config.get("tp", 1)),
+        int(config.get("cp", 1)),
+        int(config.get("ep", 1)),
+        config.get("cp_kind", "none"),
+    )
+
+
+def _memory_limit_gb(config: Dict[str, Any], system: SystemSpec) -> float:
+    if "max_memory_gb" in config:
+        return float(config["max_memory_gb"])
+    ratio = float(config.get("memory_limit_ratio", 0.8))
+    return float(system.gpu.hbm_gb) * ratio
+
+
+def _is_memory_feasible(config: Dict[str, Any], model: ModelSpec,
+                        system: SystemSpec, strategy: Strategy) -> tuple[bool, float, float]:
+    mb = memory_breakdown(None, model, system, strategy)
+    memory_gb = mb.total / 1e9
+    limit_gb = _memory_limit_gb(config, system)
+    return memory_gb <= limit_gb, memory_gb, limit_gb
+
+
+def run_training_batch_wrapper(configs: List[Dict]) -> List[Optional[Dict]]:
+    return [run_training_task_wrapper(config) for config in configs]
+
+
+def _batched(iterable, batch_size: int):
+    batch_size = max(1, int(batch_size))
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
@@ -725,11 +746,25 @@ def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
 
         strategy = _make_strategy_from_config(config)
         strategy.validate(model, system)
+
+        feasible, memory_gb, limit_gb = _is_memory_feasible(config, model, system, strategy)
+        if not feasible:
+            return {
+                "status": "skipped",
+                "config": config,
+                "type": "memory",
+                "memory_gb": memory_gb,
+                "memory_limit_gb": limit_gb,
+            }
     except Exception as e:
         return {"status": "error", "config": config, "type": "validation_error", "message": str(e)}
 
     try:
-        graph = build_graph(model, strategy)
+        graph_key = _graph_cache_key(config)
+        graph = _WORKER_GRAPH_CACHE.get(graph_key)
+        if graph is None:
+            graph = build_graph(model, strategy)
+            _WORKER_GRAPH_CACHE[graph_key] = graph
         report = estimate(model, system, strategy, graph=graph)
 
         return {
@@ -745,23 +780,21 @@ def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
 
 
 def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.DataFrame:
-    hw_capacity: Dict[str, float] = {}
     rows = []
     for cfg, report in zip(configs, reports):
         d = cfg.copy()
         if report.memory:
-            hw_name = cfg.get("hw", "nvidia_h100_sxm")
-            cap_gb = hw_capacity.get(hw_name)
-            if cap_gb is None:
-                cap_gb = _cached_hw(hw_name).memory.capacity_gb
-                hw_capacity[hw_name] = cap_gb
             memory_gb = round(report.memory.total / 1e9, 2)
-            if memory_gb > cap_gb * 0.8:
+            hw_name = cfg.get("hw", "nvidia_h100_sxm")
+            hw = load_hw(hw_name)
+            gpu_capacity_gb = hw.memory.capacity_gb
+            # *0.8利用率
+            if memory_gb > gpu_capacity_gb * 0.8:
                 continue
         else:
             memory_gb = None
 
-        d.update(_cached_comm_domain_columns(cfg))
+        d.update(_comm_domain_columns_from_config(cfg))
         d["compute_time_ms"] = round(report.compute_time_ms, 2)
         d["fwd_compute_ms"] = round(report.fwd_compute_ms, 2)
         d["bwd_compute_ms"] = round(report.bwd_compute_ms, 2)
@@ -872,7 +905,7 @@ def export_best_configs_excel(
         model = _load_model_spec(model_name)
         model.seq_len = seq_len
 
-        hw = _cached_hw(hw_name)
+        hw = load_hw(hw_name)
         _reject_gpus_per_node_config(best_config)
         gpus_per_node = _inferred_gpus_per_node(hw)
         nodes = _ceil_nodes_for_world_size(world_size, gpus_per_node)
@@ -911,6 +944,8 @@ def run_training_search_parallel(
         param_grid: Dict[str, List[Any]],
         workers: int = 8,
         mfu_threshold: float = 0.0,
+        batch_size: int = 32,
+        export_best_excel: bool = True,
 ) -> pd.DataFrame:
     model_name = param_grid.get("model", ["unknown"])
     if isinstance(model_name, list):
@@ -938,6 +973,7 @@ def run_training_search_parallel(
 
     all_results: List[Dict] = []
     error_count = 0
+    skipped_count = 0
 
     config_generator = manager.generate_static_configs_stream()
     futures_map = {}
@@ -948,36 +984,43 @@ def run_training_search_parallel(
             initargs=(model_name,),
     ) as executor:
         with tqdm(total=total_configs, desc="Evaluating configs", unit="config") as pbar:
-            for cfg in config_generator:
-                fut = executor.submit(run_training_task_wrapper, cfg)
-                futures_map[fut] = cfg
+            for batch in _batched(config_generator, batch_size):
+                fut = executor.submit(run_training_batch_wrapper, batch)
+                futures_map[fut] = len(batch)
 
                 while len(futures_map) >= adjusted_workers * 2:
                     done, _ = concurrent.futures.wait(
                         futures_map.keys(), return_when=concurrent.futures.FIRST_COMPLETED
                     )
                     for fut in done:
-                        futures_map.pop(fut)
-                        pbar.update(1)
-                        res = fut.result()
-                        if res and res["status"] == "success":
-                            all_results.append(res)
-                        elif res and res["status"] == "error":
-                            error_count += 1
+                        n = futures_map.pop(fut)
+                        pbar.update(n)
+                        for res in fut.result():
+                            if res and res["status"] == "success":
+                                all_results.append(res)
+                            elif res and res["status"] == "error":
+                                error_count += 1
+                            elif res and res["status"] == "skipped":
+                                skipped_count += 1
 
             while futures_map:
                 done, _ = concurrent.futures.wait(futures_map.keys())
                 for fut in done:
-                    futures_map.pop(fut)
-                    pbar.update(1)
-                    res = fut.result()
-                    if res and res["status"] == "success":
-                        all_results.append(res)
-                    elif res and res["status"] == "error":
-                        error_count += 1
+                    n = futures_map.pop(fut)
+                    pbar.update(n)
+                    for res in fut.result():
+                        if res and res["status"] == "success":
+                            all_results.append(res)
+                        elif res and res["status"] == "error":
+                            error_count += 1
+                        elif res and res["status"] == "skipped":
+                            skipped_count += 1
 
     elapsed = time.time() - start_time
-    logger.info(f"Search completed in {elapsed:.2f} seconds, success={len(all_results)}, errors={error_count}")
+    logger.info(
+        f"Search completed in {elapsed:.2f} seconds, success={len(all_results)}, "
+        f"skipped={skipped_count}, errors={error_count}"
+    )
 
     if not all_results:
         logger.error("No valid configurations found.")
@@ -987,14 +1030,10 @@ def run_training_search_parallel(
     # 80% of GPU HBM capacity. Apply before BOTH the CSV table and the Excel
     # "best" export so the latter cannot pick infeasible configs.
     feasible_results: List[Dict] = []
-    hw_cap_cache: Dict[str, float] = {}
     for r in all_results:
         rep = r["report"]
         hw_name = r.get("hw_name") or r["config"].get("hw", "nvidia_h100_sxm")
-        cap_gb = hw_cap_cache.get(hw_name)
-        if cap_gb is None:
-            cap_gb = _cached_hw(hw_name).memory.capacity_gb
-            hw_cap_cache[hw_name] = cap_gb
+        cap_gb = load_hw(hw_name).memory.capacity_gb
         if rep.memory is None:
             feasible_results.append(r)
             continue
@@ -1019,7 +1058,8 @@ def run_training_search_parallel(
 
     save_results(filtered_df, manager.output_path)
 
-    export_best_configs_excel(feasible_results, manager.output_path)
+    if export_best_excel:
+        export_best_configs_excel(feasible_results, manager.output_path)
 
     if not filtered_df.empty:
         best = filtered_df.iloc[0]
@@ -1061,5 +1101,6 @@ if __name__ == "__main__":
     df = run_training_search_parallel(
         param_grid=training_param_grid,
         workers=32,
-        mfu_threshold=0.05,
+        mfu_threshold=0.00,
+        export_best_excel=False,
     )
