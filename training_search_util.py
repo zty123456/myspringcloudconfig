@@ -73,6 +73,36 @@ def _reject_gpus_per_node_config(config_or_grid: Dict[str, Any]) -> None:
         )
 
 
+def _exact_global_batch_from_total_token(total_token: int | float, seq_len: int | float) -> int:
+    if seq_len <= 0:
+        raise ValueError("seq_len must be positive when deriving global_batch from total_token")
+    total = int(total_token)
+    seq = int(seq_len)
+    if total != float(total_token) or seq != float(seq_len):
+        raise ValueError("total_token and seq_len must be integers")
+    if total % seq != 0:
+        raise ValueError(
+            f"total_token must be divisible by seq_len in exact-token mode: "
+            f"total_token={total}, seq_len={seq}"
+        )
+    return total // seq
+
+
+def _apply_total_token_batch_rule(
+        config: Dict[str, Any],
+        *,
+        default_seq_len: int,
+        model: ModelSpec | None = None,
+) -> None:
+    total_token = config.get("total_token")
+    seq_len = config.get("seq_len", default_seq_len)
+    if total_token is not None and total_token > 0:
+        config["seq_len"] = int(seq_len)
+        config["global_batch"] = _exact_global_batch_from_total_token(total_token, seq_len)
+    if model is not None and seq_len is not None:
+        model.seq_len = int(seq_len)
+
+
 def _warn_if_partial_allocation(system: SystemSpec) -> None:
     if system.idle_gpus > 0:
         logger.warning(
@@ -87,13 +117,13 @@ def _warn_if_partial_allocation(system: SystemSpec) -> None:
 
 
 def _system_from_hw(
-    hw: Any,
-    *,
-    nodes: int,
-    gpus_per_node: int,
-    world_size_override: int | None,
-    host_mem_gb: float,
-    warn_partial: bool = True,
+        hw: Any,
+        *,
+        nodes: int,
+        gpus_per_node: int,
+        world_size_override: int | None,
+        host_mem_gb: float,
+        warn_partial: bool = True,
 ) -> SystemSpec:
     system = SystemSpec(
         gpu=GPU(
@@ -138,12 +168,12 @@ def _normalize_pod_packing_axes(value: Any) -> tuple[str, ...]:
 
 
 def _pod_packing_group_size(
-    axes: tuple[str, ...],
-    *,
-    tp: int,
-    cp: int,
-    pp: int,
-    dp: int,
+        axes: tuple[str, ...],
+        *,
+        tp: int,
+        cp: int,
+        pp: int,
+        dp: int,
 ) -> int:
     values = {"tp": tp, "cp": cp, "pp": pp, "dp": dp}
     group_size = 1
@@ -153,14 +183,14 @@ def _pod_packing_group_size(
 
 
 def _passes_pod_packing(
-    *,
-    tp: int,
-    cp: int,
-    pp: int,
-    dp: int,
-    target_ws: int,
-    system: SystemSpec | None,
-    other_config: Dict[str, Any] | None,
+        *,
+        tp: int,
+        cp: int,
+        pp: int,
+        dp: int,
+        target_ws: int,
+        system: SystemSpec | None,
+        other_config: Dict[str, Any] | None,
 ) -> bool:
     cfg = other_config or {}
     if system is None:
@@ -249,8 +279,8 @@ def _make_strategy_from_config(config: Dict) -> Strategy:
 
     pp_schedule = PPSched(config.get("pp_schedule", "1f1b"))
     vpp_chunks = config.get("vpp_chunks", 1)
-    if pp_schedule != PPSched.INTERLEAVED:
-        vpp_chunks = 1
+    # if pp_schedule not in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V):
+    #     vpp_chunks = 1
 
     return Strategy(
         tp=config.get("tp", 1),
@@ -320,8 +350,8 @@ class TrainingConfigManager:
     ) -> Strategy:
         pp_schedule = PPSched(other_config.get("pp_schedule", "1f1b"))
         vpp_chunks = other_config.get("vpp_chunks", 1)
-        if pp_schedule != PPSched.INTERLEAVED:
-            vpp_chunks = 1
+        # if pp_schedule not in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V):
+        #     vpp_chunks = 1
 
         recompute = RecomputePolicy()
         rc_str = other_config.get("recompute", "none")
@@ -356,15 +386,15 @@ class TrainingConfigManager:
         )
 
     def _expand_auto_values_optimized(
-        self,
-        grid: Dict[str, List[Any]],
-        world_size: int,
-        model: ModelSpec | None = None,
+            self,
+            grid: Dict[str, List[Any]],
+            world_size: int,
+            model: ModelSpec | None = None,
     ) -> None:
         """
         核心优化：基于已知维度的最小值，动态裁剪并收紧 auto 变量的选择范围。
         避免盲目扩展成全量 world_size 的约数，将 auto 并行搜索空间缩减 90% 以上。
-        
+
         注意：EP 不占用额外 rank，world_size = TP*CP*PP*DP
         """
         rank_keys = ["tp", "cp", "pp", "dp"]
@@ -452,6 +482,8 @@ class TrainingConfigManager:
             if model is not None:
                 if model.num_heads % tp != 0:
                     continue
+                if model.hidden % tp != 0:
+                    continue
                 if model.num_kv_heads % tp != 0 and model.num_kv_heads >= tp:
                     continue
                 if model.ffn % tp != 0:
@@ -465,10 +497,6 @@ class TrainingConfigManager:
                 for pp in pp_vals:
                     if model is not None and pp > len(model.layers):
                         continue
-                    # Pipeline schedules other than 1F1B require pp > 1; at
-                    # pp=1 they degenerate to OneF1B and just pollute the grid.
-                    if pp == 1 and pp_schedule_str != "1f1b":
-                        continue
 
                     remaining = target_ws // (tp * cp * pp)
                     if remaining <= 0 or target_ws % (tp * cp * pp) != 0:
@@ -479,9 +507,9 @@ class TrainingConfigManager:
                             continue
 
                         if not _passes_pod_packing(
-                            tp=tp, cp=cp, pp=pp, dp=dp,
-                            target_ws=target_ws, system=system,
-                            other_config=other_config,
+                                tp=tp, cp=cp, pp=pp, dp=dp,
+                                target_ws=target_ws, system=system,
+                                other_config=other_config,
                         ):
                             continue
 
@@ -510,9 +538,6 @@ class TrainingConfigManager:
 
                             yield (tp, cp, pp, ep, dp)
 
-    def get_valid_parallel_combos(self, grid: Dict[str, List[Any]], target_ws: int) -> List[Tuple[int, ...]]:
-        return list(self._enumerate_valid_parallel_configs(grid, target_ws))
-
     def count_total_configs(self) -> int:
         grid = {k: (v if isinstance(v, list) else [v]) for k, v in self.param_grid.items()}
         _reject_gpus_per_node_config(grid)
@@ -529,13 +554,13 @@ class TrainingConfigManager:
         self._expand_auto_values_optimized(grid, target_ws, model_for_auto)
 
         parallel_keys = ["tp", "cp", "pp", "ep", "dp"]
-        
+
         total_token_vals = grid.get("total_token", [])
         has_total_token = total_token_vals and any(v is not None and v > 0 for v in total_token_vals)
-        
+
         other_keys = [k for k in grid.keys() if k not in parallel_keys and k != "world_size"]
-        if has_total_token and "seq_len" in other_keys:
-            other_keys.remove("seq_len")
+        if has_total_token and "global_batch" in other_keys:
+            other_keys.remove("global_batch")
 
         hw_name = grid.get("hw", ["nvidia_h100_sxm"])[0] if grid.get("hw") else "nvidia_h100_sxm"
 
@@ -568,6 +593,9 @@ class TrainingConfigManager:
         total = 0
         for other_vals in itertools.product(*[grid[k] for k in other_keys]):
             base_config = dict(zip(other_keys, other_vals))
+            _apply_total_token_batch_rule(
+                base_config, default_seq_len=seq_len, model=model,
+            )
             total += sum(1 for _ in self._enumerate_valid_parallel_configs(
                 grid, target_ws, model, system, base_config
             ))
@@ -594,13 +622,13 @@ class TrainingConfigManager:
         self._expand_auto_values_optimized(grid, target_ws, model_for_auto)
 
         parallel_keys = ["tp", "cp", "pp", "ep", "dp"]
-        
+
         total_token_vals = grid.get("total_token", [])
         has_total_token = total_token_vals and any(v is not None and v > 0 for v in total_token_vals)
-        
+
         other_keys = [k for k in grid.keys() if k not in parallel_keys and k != "world_size"]
-        if has_total_token and "seq_len" in other_keys:
-            other_keys.remove("seq_len")
+        if has_total_token and "global_batch" in other_keys:
+            other_keys.remove("global_batch")
 
         hw_name = grid.get("hw", ["nvidia_h100_sxm"])[0] if grid.get("hw") else "nvidia_h100_sxm"
 
@@ -632,18 +660,9 @@ class TrainingConfigManager:
             base_config = dict(zip(other_keys, other_vals))
             base_config["world_size"] = target_ws
 
-            total_token = base_config.get("total_token")
-            if total_token is not None and total_token > 0:
-                global_batch = base_config.get("global_batch", 0)
-                if global_batch > 0:
-                    seq_len = int(total_token / global_batch)
-                    base_config["seq_len"] = seq_len
-                    if model is not None:
-                        model.seq_len = seq_len
-            else:
-                seq_len = base_config.get("seq_len")
-                if seq_len is not None and model is not None:
-                    model.seq_len = seq_len
+            _apply_total_token_batch_rule(
+                base_config, default_seq_len=seq_len, model=model,
+            )
 
             for p_vals in self._enumerate_valid_parallel_configs(
                     grid, target_ws, model, system, base_config
@@ -814,7 +833,7 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         d["optimizer_comm_ms"] = round(report.optimizer_comm_ms + report.optimizer_comm_hidden_ms, 2)
         d["optimizer_exposed_ms"] = round(report.optimizer_comm_ms, 2)
         d["recompute_time_ms"] = round(report.recompute_time_ms, 3)
-        d["recompute_time_raw_ms"] =  round(report.recompute_time_raw_ms, 3)
+        d["recompute_time_raw_ms"] = round(report.recompute_time_raw_ms, 3)
         d["step_time_ms"] = round(report.step_time_ms, 3)
         d["pipeline_time_ms"] = round(report.pipeline_time_ms, 3)
         d["mfu"] = round(report.mfu, 4)
@@ -1074,33 +1093,34 @@ if __name__ == "__main__":
 
     training_param_grid = {
         "model": ["deepseek_v4_pro"],
-        "hw": ["nvidia_b300"],
+        "hw": ["test1", "test2"],
         "world_size": [8192],
-        "tp": [1, 2, 4, 8, 16],
-        "cp": [1, 2, 4, 8, 16],
+        "tp": [1, 2, 4, 8, 16, 32, 64, 128],
+        "cp": [1, 2, 4, 8, 16, 32, 64, 128],
         "pp": [1, 2, 4, 8, 16],
         # EP must divide DP under the current expert-DP sharding model.
-        "ep": [128],
+        "ep": [32, 64, 128],
         "dp": "auto",
-        "micro_batch": [1, 16, 32],
-        "global_batch": [512, 1024, 2048, 4096, 8192, 65536],
-        "seq_len": [8192, 32768, 131072],
+        "micro_batch": [1],
+        # Derived per seq_len as exact total_token // seq_len.
+        "seq_len": [1048576],
         "total_token": [536870912],
         "zero_stage": [3],
         "pp_schedule": ["dualpipev"],
         "cp_kind": ["ulysses"],
+        "vpp_chunks": [1, 2, 4],
         "tp_overlap": ["coc"],
         "ep_overlap": [True],
         "dualbatch": [True],
         "dp_overlap_in_bubble": [True],
-        "recompute": ["none", "mhc"],
+        "recompute": ["none", "mhc", "full", "selective"],
         "optimizer": ["muon"],
-        "quant_preset": ["deepseek_v4_fp8_fp4"],
+        "quant_preset": ["deepseek_v4_fp4_fp4"],
     }
 
     df = run_training_search_parallel(
         param_grid=training_param_grid,
-        workers=32,
+        workers=128,
         mfu_threshold=0.00,
         export_best_excel=False,
     )
