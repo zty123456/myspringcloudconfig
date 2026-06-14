@@ -1,0 +1,15 @@
+flowchart TB
+    Start["输入 param_grid"]
+    Normalize["标量转 list\n校验 gpus_per_node 已移除"]
+    World{"world_size 是否单值?"}
+    Model["加载 ModelSpec\n用于 auto 和合法性检查"]
+    System["加载 HardwareSpec -> SystemSpec"]
+    Auto["expand_auto_values_optimized()\n收紧 auto 候选"]
+    Other["枚举非并行维度\nhw/seq/recompute/optimizer/..."]
+    TokenRule["total_token -> global_batch\n要求 total_token % seq_len == 0"]
+    Parallel["enumerate_valid_parallel_configs()\n枚举 TP/CP/PP/EP/DP"]
+    Yield["yield config"]
+
+    Start --> Normalize --> World
+    World -- 多 world_size + auto --> Error["抛出 ValueError"]
+    World -- 单 world_size --> Model --> System --> Auto --> Other --> TokenRule --> Parallel --> Yield

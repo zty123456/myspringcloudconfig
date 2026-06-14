@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant Main as run_training_search_parallel
+    participant Manager as TrainingConfigManager
+    participant Executor as ProcessPoolExecutor
+    participant Worker as Worker Process
+    participant Batch as run_training_batch_wrapper
+    participant Task as run_training_task_wrapper
+    participant Result as all_results
+
+    Main->>Manager: count_total_configs()
+    Main->>Manager: generate_static_configs_stream()
+    Main->>Executor: initializer(_worker_initializer)
+    loop 按 batch_size 分批
+        Main->>Executor: submit(batch)
+        Executor->>Worker: run batch
+        Worker->>Batch: map configs
+        Batch->>Task: evaluate config
+        Task-->>Batch: success / skipped / error
+        Batch-->>Executor: list results
+        Executor-->>Main: future done
+        Main->>Result: success 加入 all_results\n统计 skipped/error
+    end

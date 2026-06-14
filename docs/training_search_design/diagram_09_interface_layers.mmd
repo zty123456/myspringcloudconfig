@@ -1,0 +1,48 @@
+classDiagram
+    class TrainingConfigManager {
+        +param_grid
+        +output_path
+        +count_total_configs()
+        +generate_static_configs_stream()
+        -_expand_auto_values_optimized()
+        -_enumerate_valid_parallel_configs()
+    }
+
+    class SearchRuntime {
+        +run_training_search_parallel()
+        +run_training_batch_wrapper()
+        +run_training_task_wrapper()
+        -_worker_initializer()
+    }
+
+    class ConfigFactory {
+        +_load_model_spec()
+        +_make_system_from_config()
+        +_make_strategy_from_config()
+        +_apply_total_token_batch_rule()
+    }
+
+    class Estimator {
+        +estimate()
+        +estimate_via_pipeline()
+        -_estimate_legacy()
+    }
+
+    class ResultFormatter {
+        +format_results()
+        +save_results()
+        +select_best_configs_by_tokens()
+    }
+
+    class Exporter {
+        +export_best_analysis_excel()
+        +export_best_configs_excel()
+        +export_estimate_excel()
+    }
+
+    TrainingConfigManager --> ConfigFactory
+    SearchRuntime --> TrainingConfigManager
+    SearchRuntime --> ConfigFactory
+    SearchRuntime --> Estimator
+    SearchRuntime --> ResultFormatter
+    ResultFormatter --> Exporter

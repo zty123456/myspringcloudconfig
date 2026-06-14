@@ -1,0 +1,30 @@
+flowchart TB
+    Candidate["候选 TP/CP/PP/EP/DP"]
+    TP{"TP 维度整除?\nheads/hidden/kv/ffn"}
+    CP{"CP 合法?\nUlysses 要求 heads % cp == 0"}
+    PP{"PP <= layer 数?"}
+    Rank{"tp * cp * pp * dp == world_size?\nEP 不占额外 rank"}
+    Pod{"pod packing 通过?\n按 tp/cp/pp/dp 物理拓扑检查"}
+    Batch{"global_batch % (micro_batch * dp) == 0?"}
+    Zero{"ZeRO stage >=1 时 dp > 1?"}
+    EP{"EP 合法?\ndp % ep == 0\nnum_experts % ep == 0\nep <= dp*pp*cp"}
+    Keep["保留配置"]
+    Drop["剪枝跳过"]
+
+    Candidate --> TP
+    TP -- 否 --> Drop
+    TP -- 是 --> CP
+    CP -- 否 --> Drop
+    CP -- 是 --> PP
+    PP -- 否 --> Drop
+    PP -- 是 --> Rank
+    Rank -- 否 --> Drop
+    Rank -- 是 --> Pod
+    Pod -- 否 --> Drop
+    Pod -- 是 --> Batch
+    Batch -- 否 --> Drop
+    Batch -- 是 --> Zero
+    Zero -- 否 --> Drop
+    Zero -- 是 --> EP
+    EP -- 否 --> Drop
+    EP -- 是 --> Keep

@@ -1,0 +1,14 @@
+flowchart LR
+    Estimate["estimate(model, system, strategy, graph=None/capture=None)"]
+    HasGraph{"graph 是否传入?"}
+    Legacy["_estimate_legacy()\n配置建模路径"]
+    Pipeline["estimate_via_pipeline()\n抓图/Transform Pipeline 路径"]
+    Graph["build_explicit_graph\n或 build_captured_graph"]
+    Compose["pipeline_step_time()\nComposer/Schedule"]
+    Transform["build_default_pipeline().run()"]
+    Metadata["training_flops\nmemory_breakdown\nstep_result"]
+    Report["TrainingReport"]
+
+    Estimate --> HasGraph
+    HasGraph -- 是 --> Legacy --> Graph --> Compose --> Report
+    HasGraph -- 否 --> Pipeline --> Transform --> Metadata --> Report

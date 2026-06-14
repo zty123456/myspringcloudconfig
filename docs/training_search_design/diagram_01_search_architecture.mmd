@@ -1,0 +1,24 @@
+flowchart LR
+    Grid["param_grid\n模型/硬件/并行/训练选项"]
+    Manager["TrainingConfigManager\n搜索空间管理"]
+    Stream["generate_static_configs_stream()\n流式配置生成"]
+    Pool["ProcessPoolExecutor\n批量并行评估"]
+    Worker["run_training_task_wrapper()\n单配置评估"]
+    Estimator["estimate()\n训练性能估算"]
+    Report["TrainingReport\n性能/通信/内存"]
+    Format["format_results()\n结果表格化"]
+    Select["select_best_configs_by_tokens()\n按硬件/seq选最优"]
+    Export["CSV / Excel Export\nsummary / best / analysis"]
+
+    Grid --> Manager --> Stream --> Pool --> Worker --> Estimator --> Report
+    Report --> Format --> Select --> Export
+
+    subgraph Caches["Worker 级缓存"]
+        ModelCache["_WORKER_MODEL_CACHE"]
+        HwCache["_WORKER_HW_CACHE"]
+        GraphCache["_WORKER_GRAPH_CACHE"]
+    end
+
+    Worker -.读取/写入.-> ModelCache
+    Worker -.读取/写入.-> HwCache
+    Worker -.读取/写入.-> GraphCache

@@ -1,0 +1,16 @@
+flowchart TB
+    All["all_results\nsuccess configs"]
+    MetricFilters["report_passes_filters()\n用户 filters"]
+    Memory["HBM 0.8x 可行性过滤"]
+    Format["format_results()\n扁平化 TrainingReport"]
+    MFU["mfu_threshold 过滤"]
+    Sort["按 sort_by 排序\n默认 tokens_per_sec desc"]
+    CSV["save_results()\nresults_summary.csv"]
+    Best["select_best_configs_by_tokens()\n每组/硬件/seq 最优"]
+    Analysis["export_best_analysis_excel()\nraw_data + analysis"]
+    Detail["export_best_configs_excel()\n单最优详细 Excel"]
+
+    All --> MetricFilters --> Memory --> Format --> MFU --> Sort
+    Sort --> CSV
+    Sort --> Best --> Analysis
+    Sort --> Detail

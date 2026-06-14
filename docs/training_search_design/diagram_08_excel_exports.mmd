@@ -1,0 +1,17 @@
+flowchart LR
+    BestDF["best_df\n按 group/hw/seq 排序"]
+    GroupLabel["_with_group_labels()\n添加 对比N"]
+    Raw["_write_raw_data_sheet()\n完整配置和指标"]
+    Analysis["_write_analysis_sheet()\n占比/归一化/对比视图"]
+    Style["_copy_row_style\nmerge group cells\nfill colors"]
+    Workbook["best_config_analysis.xlsx"]
+
+    BestResults["filtered_results"]
+    GroupBy["groupby(model, hw, seq_len, world_size)"]
+    Pick["step_time_ms 最小配置"]
+    Build["load model/hw\nbuild_explicit_graph\nop_cost_from_node"]
+    DetailExcel["export_estimate_excel()\n详细 best.xlsx"]
+
+    BestDF --> GroupLabel --> Raw --> Style --> Workbook
+    BestDF --> GroupLabel --> Analysis --> Style
+    BestResults --> GroupBy --> Pick --> Build --> DetailExcel

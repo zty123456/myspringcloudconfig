@@ -1,0 +1,32 @@
+flowchart TB
+    Config["config"]
+    ModelCache{"ModelSpec cache 命中?"}
+    LoadModel["load model yaml\n可带 quant_preset"]
+    Seq["覆盖 model.seq_len"]
+    SystemCache{"SystemSpec cache 命中?"}
+    MakeSystem["load_hw -> SystemSpec\n按 world_size 推导 nodes"]
+    Strategy["make Strategy\nrecompute/optimizer/schedule/parallel"]
+    Validate["strategy.validate(model, system)"]
+    Mem["memory_breakdown()\n预估内存"]
+    MemOK{"memory <= limit?"}
+    GraphCache{"graph cache 命中?"}
+    BuildGraph["build_explicit_graph(model, strategy)"]
+    Estimate["estimate(model, system, strategy, graph)"]
+    Success["status=success\nreport + config"]
+    Skipped["status=skipped\ntype=memory"]
+    Error["status=error\nvalidation/runtime"]
+
+    Config --> ModelCache
+    ModelCache -- 否 --> LoadModel --> Seq
+    ModelCache -- 是 --> Seq
+    Seq --> SystemCache
+    SystemCache -- 否 --> MakeSystem --> Strategy
+    SystemCache -- 是 --> Strategy
+    Strategy --> Validate --> Mem --> MemOK
+    MemOK -- 否 --> Skipped
+    MemOK -- 是 --> GraphCache
+    GraphCache -- 否 --> BuildGraph --> Estimate
+    GraphCache -- 是 --> Estimate
+    Estimate --> Success
+    Validate -.异常.-> Error
+    Estimate -.异常.-> Error
