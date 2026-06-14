@@ -1,0 +1,52 @@
+classDiagram
+    class GraphPass {
+        +str name
+        +run(graph, ctx) OpGraph
+    }
+
+    class ExpertParallelPass {
+        +name = "expert_parallel"
+        +run(graph, ctx) OpGraph
+    }
+
+    class ExpertGroupedMMPass {
+        +name = "expert_grouped_mm"
+        +run(graph, ctx) OpGraph
+        -_fuse_experts(g, num_experts, ep, ctx)
+        -_fuse_mega_moe_forward_layer(...)
+        -_fuse_backward_layer(...)
+    }
+
+    class CommInserterPass {
+        +name = "comm_inserter"
+        +run(graph, ctx) OpGraph
+        -_insert_ep_comm(g, ctx)
+    }
+
+    class OpNode {
+        +id
+        +op_type
+        +inputs
+        +outputs
+        +scope
+        +annotations
+        +attrs
+    }
+
+    class TransformContext {
+        +parallel.ep
+        +profile.num_experts
+        +profile.moe_active
+        +training.micro_batch
+        +training.mega_moe
+    }
+
+    GraphPass <|-- ExpertParallelPass
+    GraphPass <|-- ExpertGroupedMMPass
+    GraphPass <|-- CommInserterPass
+    ExpertParallelPass --> OpNode : 写 ep 注解
+    ExpertGroupedMMPass --> OpNode : 替换为 GroupedMM / MegaMoE
+    CommInserterPass --> OpNode : 插入 comm.all_to_all
+    TransformContext --> ExpertParallelPass
+    TransformContext --> ExpertGroupedMMPass
+    TransformContext --> CommInserterPass

@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant Pipeline as TransformPipeline
+    participant TP as TensorParallelPass
+    participant EP as ExpertParallelPass
+    participant GMM as ExpertGroupedMMPass
+    participant CP as ContextParallelPass
+    participant Recompute as Recompute/Offload
+    participant Comm as CommInserterPass
+    participant Fuse as FusionPass
+    participant Analysis as Analysis Passes
+
+    Pipeline->>TP: tp > 1 时运行
+    Pipeline->>EP: ep > 1 时运行
+    EP-->>Pipeline: expert 节点带 ep_needs_a2a
+    Pipeline->>GMM: ep > 1 时运行
+    GMM-->>Pipeline: expert 子图变为 GroupedMM / MegaMoE
+    Pipeline->>CP: cp > 1 时运行
+    Pipeline->>Recompute: training 时运行
+    Pipeline->>Comm: TP/EP/CP 任一开启时运行
+    Comm-->>Pipeline: 插入 all_reduce / all_to_all / CP 通信
+    Pipeline->>Fuse: 通用 fusion
+    Pipeline->>Analysis: FLOPs / Roofline / 通信时延

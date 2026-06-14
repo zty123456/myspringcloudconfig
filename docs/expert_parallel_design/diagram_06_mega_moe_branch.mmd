@@ -1,0 +1,13 @@
+flowchart TB
+    Start["ExpertGroupedMMPass forward layer"]
+    Mega{"ctx.training.mega_moe?"}
+    Standard["标准路径\nGroupedMM gate_up -> silu -> GroupedMM down"]
+    MegaNode["mega_moe 节点\n融合 dispatch + compute + combine"]
+    Meta["mega_moe_meta\nm / micro_batch / top_k / ep\nexperts_per_rank / waves / dtype bytes"]
+    NoExternal["不写 ep_needs_a2a\nCommInserter 不再插外部 A2A"]
+    Analysis["Analysis Pass\n内部 EP 通信与 wave overlap 建模"]
+
+    Start --> Mega
+    Mega -- 否 --> Standard
+    Mega -- 是 --> MegaNode --> Meta --> Analysis
+    MegaNode --> NoExternal

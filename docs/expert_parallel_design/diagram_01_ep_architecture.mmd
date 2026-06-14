@@ -1,0 +1,27 @@
+flowchart LR
+    Raw["原始 OpGraph\nMoE expert aten ops"]
+    TP["TensorParallelPass\nTP 分片"]
+    EP["ExpertParallelPass\n识别 routed experts\n写入 EP 注解"]
+    GMM["ExpertGroupedMMPass\nGroupedMatMul / MegaMoE 降低"]
+    COMM["CommInserterPass\n插入 EP all_to_all"]
+    ANALYSIS["Analysis Passes\nFLOPs / Roofline / CommLatency"]
+    REPORT["Report / Search / Scheduler\n消费 EP 建模结果"]
+
+    Raw --> TP --> EP --> GMM --> COMM --> ANALYSIS --> REPORT
+
+    subgraph Metadata["核心元数据"]
+        A1["ep_needs_a2a"]
+        A2["ep_experts_local"]
+        A3["grouped_mm_role"]
+        A4["ep_block_down_id"]
+        A5["mega_moe_meta"]
+    end
+
+    EP -.写入.-> A1
+    EP -.写入.-> A2
+    GMM -.写入.-> A3
+    GMM -.写入.-> A4
+    GMM -.可选.-> A5
+    A1 -.驱动.-> COMM
+    A4 -.定位 combine.-> COMM
+    A5 -.驱动内部通信建模.-> ANALYSIS

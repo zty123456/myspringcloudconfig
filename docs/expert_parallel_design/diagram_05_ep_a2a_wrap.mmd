@@ -1,0 +1,19 @@
+flowchart LR
+    Prev["上游节点"]
+    Dispatch["comm.all_to_all\nrole=dispatch"]
+    GateUp["GroupedMatMul gate_up\nep_needs_a2a=True"]
+    Silu["aten.silu"]
+    Down["GroupedMatMul down\n由 ep_block_down_id 定位"]
+    Combine["comm.all_to_all\nrole=combine"]
+    Next["下游节点"]
+
+    Prev --> Dispatch --> GateUp --> Silu --> Down --> Combine --> Next
+
+    subgraph Payload["A2A payload"]
+        Formula["msg_bytes = micro_batch * seq_len * top_k * hidden * dtype_bytes"]
+        Sem["msg_bytes_semantics = per_a2a_direction"]
+        Group["group_size = ep"]
+    end
+
+    Dispatch -.使用.-> Payload
+    Combine -.使用.-> Payload

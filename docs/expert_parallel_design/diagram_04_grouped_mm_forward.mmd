@@ -1,0 +1,23 @@
+flowchart LR
+    In["外部输入\nhidden tokens"]
+    Gate["expert gate_proj / w1"]
+    Up["expert up_proj / w3"]
+    Act["SwiGLU / silu"]
+    Down["expert down_proj / w2"]
+    Add["routed add chain"]
+    Out["外部输出"]
+
+    In --> Gate --> Act
+    In --> Up --> Act --> Down --> Add --> Out
+
+    subgraph Lowering["ExpertGroupedMMPass forward lowering"]
+        G1["GroupedMatMul gate_up\nshape: G x M x (gate+up)"]
+        S["aten.silu\nshape: G x M x ffn"]
+        G2["GroupedMatMul down\nshape: G x M x hidden"]
+    end
+
+    In ==rewire==> G1 --> S --> G2 ==rewire==> Out
+    Gate -.删除.-> G1
+    Up -.删除.-> G1
+    Down -.删除.-> G2
+    Add -.删除.-> G2

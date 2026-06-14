@@ -1,0 +1,18 @@
+flowchart LR
+    GradOut["外部梯度输入"]
+    DownBwd["GroupedMatMul down_bwd\nH_out -> ffn"]
+    GateUpBwd["GroupedMatMul gate_up_bwd\nffn -> gate+up grad"]
+    GradNext["外部梯度输出"]
+
+    GradOut --> DownBwd --> GateUpBwd --> GradNext
+
+    subgraph Rules["Backward lowering 规则"]
+        R1["按 layer_key + phase=bwd 分组"]
+        R2["识别 w2/down_proj、w1/gate_proj、w3/up_proj"]
+        R3["形状校验后删除旧 expert matmul"]
+        R4["down_bwd 作为 EP block 入口"]
+        R5["ep_block_down_id 指向 gate_up_bwd"]
+    end
+
+    Rules -.约束.-> DownBwd
+    Rules -.约束.-> GateUpBwd

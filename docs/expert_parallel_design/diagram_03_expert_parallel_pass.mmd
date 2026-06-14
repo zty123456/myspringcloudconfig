@@ -1,0 +1,20 @@
+flowchart TB
+    Start["ExpertParallelPass.run(graph, ctx)"]
+    EPCheck{"ctx.parallel.ep > 1?"}
+    ProfileCheck{"profile.num_experts > 1?"}
+    Local["experts_per_rank = num_experts // ep"]
+    Clone["clone graph"]
+    Iterate["遍历 OpNode"]
+    ScopeCheck{"scope 是 routed expert?\n且不是 shared_expert"}
+    Annotate["写入 annotations\n ep_experts_local\n ep_needs_a2a=True"]
+    Keep["保持节点不变"]
+    Return["返回图"]
+
+    Start --> EPCheck
+    EPCheck -- 否 --> Return
+    EPCheck -- 是 --> ProfileCheck
+    ProfileCheck -- 否 --> Return
+    ProfileCheck -- 是 --> Local --> Clone --> Iterate --> ScopeCheck
+    ScopeCheck -- 是 --> Annotate --> Iterate
+    ScopeCheck -- 否 --> Keep --> Iterate
+    Iterate --> Return
