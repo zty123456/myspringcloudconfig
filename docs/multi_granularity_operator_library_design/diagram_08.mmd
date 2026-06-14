@@ -1,0 +1,26 @@
+flowchart TB
+    Node["OpNode"]
+    HW["HardwareSpec"]
+    Available{"cost_model\n是否可导入?"}
+    HWMap{"hw.name\n是否有环境映射?"}
+    Comm{"是否 communication\n算子?"}
+    MapOp["map_op_type\nZRT op -> CostLib op"]
+    Tensor["convert_tensor\nTensorMeta -> tensor dict"]
+    Params["build params\ninputs / outputs / attrs / block_dim"]
+    Init["PerformancePredict(env)"]
+    Call["op_performance_predict(op_type, params, options)"]
+    OK{"result_code == 0\n且有 predict_time?"}
+    Success["SimResult\nbackend=lookup\nconfidence=0.8"]
+    Fail["低置信度结果\n或交给下一后端"]
+    Reject["can_simulate=False"]
+
+    Node --> Available
+    HW --> HWMap
+    Available -- 否 --> Reject
+    Available -- 是 --> HWMap
+    HWMap -- 否 --> Reject
+    HWMap -- 是 --> Comm
+    Comm -- 是 --> Reject
+    Comm -- 否 --> MapOp --> Tensor --> Params --> Init --> Call --> OK
+    OK -- 是 --> Success
+    OK -- 否 --> Fail

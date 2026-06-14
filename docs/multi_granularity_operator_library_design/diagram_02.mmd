@@ -1,0 +1,44 @@
+flowchart TB
+    subgraph Upstream["上游输入域"]
+        OpGraph["OpGraph"]
+        OpNode["OpNode"]
+        Hierarchy["GraphHierarchy"]
+        HW["HardwareSpec"]
+    end
+
+    subgraph Predict["算子预测功能域"]
+        Hub["SimulatorHub"]
+        Cache["SimCache"]
+        Policy["PolicyModelManager"]
+        Strategy["PriorityModel / 预留策略"]
+        Adapter["LookupSimulator\n外部算子库适配器"]
+        Fallback["RooflineSimulator\n通用兜底"]
+    end
+
+    subgraph External["外部能力域"]
+        CostLib["PerformancePredict\n多粒度算子库"]
+        TileLib["TileSim\n预留"]
+        Config["硬件/算子映射配置\n建议外置"]
+    end
+
+    subgraph Downstream["下游消费域"]
+        SimResult["SimResult"]
+        Search["Training Search"]
+        Report["Excel / HTML / Trace"]
+    end
+
+    OpGraph --> OpNode
+    Hierarchy --> Hub
+    OpNode --> Hub
+    HW --> Hub
+    Hub <--> Cache
+    Hub --> Policy --> Strategy
+    Strategy --> Adapter
+    Strategy --> Fallback
+    Adapter --> CostLib
+    Adapter --> Config
+    Strategy -.后续.-> TileLib
+    CostLib --> SimResult
+    Fallback --> SimResult
+    SimResult --> Search
+    SimResult --> Report

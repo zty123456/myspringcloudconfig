@@ -1,0 +1,38 @@
+classDiagram
+    class OpNode {
+        +str id
+        +str op_type
+        +str op_short
+        +list~TensorMeta~ inputs
+        +list~TensorMeta~ outputs
+        +dict attrs
+        +str category
+        +str component
+        +list fused_from
+        +dict annotations
+    }
+
+    class TensorMeta {
+        +tuple shape
+        +DType dtype
+        +int numel
+    }
+
+    class HardwareSpec {
+        +str name
+        +peak_flops(dtype)
+        +memory
+        +interconnect
+    }
+
+    class LookupParams {
+        +list inputs
+        +list outputs
+        +dict attrs
+        +int block_dim
+    }
+
+    OpNode "1" --> "*" TensorMeta : inputs / outputs
+    OpNode --> LookupParams : build_params()
+    TensorMeta --> LookupParams : tensor dict
+    HardwareSpec --> LookupParams : env mapping

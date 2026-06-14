@@ -1,0 +1,38 @@
+flowchart TB
+    subgraph PublicAPI["公共入口层"]
+        HubAPI["SimulatorHub.simulate(node, hw)"]
+        GraphAPI["SimulatorHub.simulate_graph(graph, hw)"]
+    end
+
+    subgraph PolicyLayer["策略层"]
+        Manager["PolicyModelManager.simulate()"]
+        PolicyBase["PolicyBaseModel.predict()"]
+        PriorityModel["PriorityModel"]
+    end
+
+    subgraph BackendLayer["后端层"]
+        Base["OpSimulator"]
+        Lookup["LookupSimulator"]
+        Tile["TilesimSimulator"]
+        Roofline["RooflineSimulator"]
+    end
+
+    subgraph AdapterLayer["适配层"]
+        OpMap["map_op_type()"]
+        ParamBuild["build_params()"]
+        EnvMap["build_env()"]
+        ResultParse["parse_result()"]
+    end
+
+    subgraph ExternalLayer["外部库层"]
+        Perf["PerformancePredict"]
+    end
+
+    HubAPI --> Manager
+    GraphAPI --> HubAPI
+    Manager --> PolicyBase --> PriorityModel
+    PriorityModel --> Base
+    Base --> Lookup
+    Base --> Tile
+    Base --> Roofline
+    Lookup --> OpMap --> ParamBuild --> EnvMap --> Perf --> ResultParse

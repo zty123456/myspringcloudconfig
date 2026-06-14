@@ -1,0 +1,8 @@
+flowchart LR
+    MM["OpNode\nop_short=mm"]
+    Map["Matmul"]
+    Params["输入/输出 tensor dict\nattrs / block_dim"]
+    Lib["PerformancePredict"]
+    Result["SimResult\nlookup, 0.8"]
+
+    MM --> Map --> Params --> Lib --> Result

@@ -1,0 +1,34 @@
+flowchart TB
+    Start["输入 OpNode / scope"]
+    Granularity{"预测粒度"}
+    Atomic["原子算子"]
+    Fused["融合算子"]
+    Module["模块级"]
+
+    AtomicLookup{"原子库命中?"}
+    FusedLookup{"融合库命中?"}
+    ModuleLookup{"模块模板库命中?"}
+
+    Decompose["按 fused_from\n拆成子算子"]
+    SubPredict["对子算子递归预测"]
+    Aggregate["聚合 latency / confidence"]
+    ScopeAgg["按 GraphHierarchy\n聚合 scope 子树"]
+    Roofline["Roofline 兜底"]
+    Result["SimResult / 聚合报告"]
+
+    Start --> Granularity
+    Granularity --> Atomic
+    Granularity --> Fused
+    Granularity --> Module
+
+    Atomic --> AtomicLookup
+    AtomicLookup -- 是 --> Result
+    AtomicLookup -- 否 --> Roofline --> Result
+
+    Fused --> FusedLookup
+    FusedLookup -- 是 --> Result
+    FusedLookup -- 否 --> Decompose --> SubPredict --> Aggregate --> Result
+
+    Module --> ModuleLookup
+    ModuleLookup -- 是 --> Result
+    ModuleLookup -- 否 --> ScopeAgg --> Aggregate

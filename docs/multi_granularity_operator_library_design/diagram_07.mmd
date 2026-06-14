@@ -1,0 +1,39 @@
+sequenceDiagram
+    participant Caller as 上层调用方
+    participant Hub as SimulatorHub
+    participant Cache as SimCache
+    participant Manager as PolicyModelManager
+    participant Policy as PriorityModel
+    participant Lookup as LookupSimulator
+    participant Lib as PerformancePredict
+    participant Roofline as RooflineSimulator
+
+    Caller->>Hub: simulate(node, hw)
+    Hub->>Cache: get(node, hw)
+    alt 缓存命中
+        Cache-->>Hub: SimResult
+        Hub-->>Caller: SimResult
+    else 缓存未命中
+        Hub->>Manager: simulate(node, hw, policy)
+        Manager->>Policy: predict(node, hw)
+        Policy->>Lookup: can_simulate(node, hw)
+        alt lookup 可用
+            Policy->>Lookup: simulate(node, hw)
+            Lookup->>Lib: op_performance_predict(op_type, params, options)
+            alt 外部库成功
+                Lib-->>Lookup: predict_time
+                Lookup-->>Policy: SimResult(lookup)
+            else 外部库失败
+                Lookup-->>Policy: BackendUnavailable / None
+                Policy->>Roofline: simulate(node, hw)
+                Roofline-->>Policy: SimResult(roofline)
+            end
+        else lookup 不可用
+            Policy->>Roofline: simulate(node, hw)
+            Roofline-->>Policy: SimResult(roofline)
+        end
+        Policy-->>Manager: SimResult
+        Manager-->>Hub: SimResult
+        Hub->>Cache: put(node, hw, result)
+        Hub-->>Caller: SimResult
+    end

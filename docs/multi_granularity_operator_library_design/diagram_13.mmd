@@ -1,0 +1,10 @@
+flowchart TB
+    SDPA["OpNode\nop_short=sdpa"]
+    Map["FlashAttention"]
+    Lookup{"外部库命中?"}
+    Direct["lookup result"]
+    Fallback["roofline / decomposed result"]
+
+    SDPA --> Map --> Lookup
+    Lookup -- 是 --> Direct
+    Lookup -- 否 --> Fallback

@@ -1,0 +1,18 @@
+flowchart TB
+    Fused["fused.rms_norm"]
+    Direct{"融合算子库\n是否命中?"}
+    Lookup["直接返回 lookup"]
+    Split["读取 fused_from"]
+    Child1["mul"]
+    Child2["rsqrt"]
+    Child3["add"]
+    ChildPredict["子算子预测"]
+    Agg["聚合 latency\n形成 fused 结果"]
+
+    Fused --> Direct
+    Direct -- 是 --> Lookup
+    Direct -- 否 --> Split
+    Split --> Child1 --> ChildPredict
+    Split --> Child2 --> ChildPredict
+    Split --> Child3 --> ChildPredict
+    ChildPredict --> Agg

@@ -1,0 +1,16 @@
+flowchart TB
+    Module["模块级\nscope: model.layers.0.self_attn"]
+    FusedA["融合算子\nflash_attn"]
+    FusedB["融合算子\nrms_norm"]
+    Atomic1["原子算子\nbmm"]
+    Atomic2["原子算子\nsoftmax"]
+    Atomic3["原子算子\nmul / add"]
+    Atomic4["原子算子\nrsqrt"]
+
+    Module --> FusedA
+    Module --> FusedB
+    FusedA --> Atomic1
+    FusedA --> Atomic2
+    FusedA --> Atomic3
+    FusedB --> Atomic3
+    FusedB --> Atomic4

@@ -1,0 +1,20 @@
+flowchart LR
+    Request["预测请求\nOpNode + HardwareSpec"]
+    PolicyType["PolicyType"]
+    Priority["PRIORITY\n默认优先级策略"]
+    OOTB["OOTB_PERFORMANCE\n厂商库/实测库优先"]
+    Opt["OPERATOR_OPTIMIZATION\n可解释模型优先"]
+    Design["SYSTEM_DESIGN\n参数化模型优先"]
+    BackendPool["Backend Pool\nLookup / TileSim / Roofline"]
+    Result["SimResult"]
+
+    Request --> PolicyType
+    PolicyType --> Priority
+    PolicyType -.预留.-> OOTB
+    PolicyType -.预留.-> Opt
+    PolicyType -.预留.-> Design
+    Priority --> BackendPool
+    OOTB -.-> BackendPool
+    Opt -.-> BackendPool
+    Design -.-> BackendPool
+    BackendPool --> Result

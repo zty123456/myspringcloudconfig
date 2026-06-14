@@ -1,0 +1,21 @@
+flowchart LR
+    Capture["Graph Capture\nTorchDispatch / FakeTensor"]
+    IR["OpGraph / OpNode\n算子 IR"]
+    Transform["Transform Pipeline\n并行变换 / fusion / analysis"]
+    Hub["SimulatorHub\n预测入口 / 缓存"]
+    Policy["PolicyModelManager\n策略选择"]
+    Lookup["LookupSimulator\n多粒度算子库"]
+    Tile["TilesimSimulator\nTile 级模型预留"]
+    Roofline["RooflineSimulator\n解析兜底"]
+    Result["SimResult\nlatency / bound / confidence"]
+    Report["Report / Search / Scheduler\n报告与搜索消费"]
+
+    Capture --> IR --> Transform --> Hub
+    Hub --> Policy
+    Policy --> Lookup
+    Policy --> Tile
+    Policy --> Roofline
+    Lookup --> Result
+    Tile --> Result
+    Roofline --> Result
+    Result --> Hub --> Report

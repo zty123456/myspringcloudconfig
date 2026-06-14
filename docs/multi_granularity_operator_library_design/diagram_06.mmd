@@ -1,0 +1,20 @@
+flowchart TB
+    Caller["上层调用方"]
+    Hub["SimulatorHub.simulate()"]
+    CacheHit{"SimCache\n是否命中?"}
+    Manager["PolicyModelManager"]
+    Policy["PriorityModel"]
+    Backend{"选择可用后端"}
+    Lookup["LookupSimulator"]
+    Tile["TilesimSimulator\n当前 stub"]
+    Roofline["RooflineSimulator"]
+    CachePut["写入 SimCache"]
+    Result["返回 SimResult"]
+
+    Caller --> Hub --> CacheHit
+    CacheHit -- 是 --> Result
+    CacheHit -- 否 --> Manager --> Policy --> Backend
+    Backend -- lookup 可用 --> Lookup --> CachePut
+    Backend -- tilesim 可用 --> Tile --> CachePut
+    Backend -- fallback --> Roofline --> CachePut
+    CachePut --> Result
